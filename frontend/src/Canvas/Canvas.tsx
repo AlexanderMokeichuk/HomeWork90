@@ -1,18 +1,51 @@
 import {useCallback, useEffect, useRef, useState} from "react";
 import {ColorPicker} from "react-pick-color";
+import {Coordinate, PixelData} from "../type";
 
-
-type Coordinate = {
-  x: number;
-  y: number;
-};
 
 const Canvas = () => {
+  const ws = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isPainting, setIsPainting] = useState(false);
-  const [color, setColor] = useState('#000');
+  const [color, setColor] = useState("#000");
+  const [pixels, setPixels] = useState<PixelData[]>([]);
+
   const [mousePosition, setMousePosition] = useState<Coordinate | undefined>(undefined);
 
+
+  useEffect(() => {
+    ws.current = new WebSocket('ws://127.0.0.1:8000/draw');
+
+    ws.current?.addEventListener('message', (msg) => {
+      const parsed = JSON.parse(msg.data);
+      if (parsed.type === 'NEW_PIXELS') {
+        setPixels((prevState) => [...prevState, parsed.payload]);
+      }
+      if (parsed.type === 'PIXELS') {
+        setPixels(parsed.payload);
+      }
+      if (parsed.type === 'WELCOME') {
+        console.log(parsed.payload);
+      }
+
+      if (parsed.type === 'CLEAR_PIXELS') {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const context = canvas.getContext('2d');
+        context?.clearRect(0, 0, canvas.width, canvas.height);
+        setPixels([]);
+      }
+
+    });
+  }, []);
+
+  useEffect(() => {
+    if (pixels.length) {
+      pixels.forEach((item) => {
+        drawLine(item);
+      });
+    }
+  }, [pixels]);
 
   const getCoordinates = (event: MouseEvent): Coordinate | undefined => {
 
@@ -47,20 +80,20 @@ const Canvas = () => {
   }, [startPaint]);
 
 
-  const drawLine = (originalMousePosition: Coordinate, newMousePosition: Coordinate) => {
+  const drawLine = (pixelData: PixelData) => {
     if (!canvasRef.current) {
       return;
     }
     const canvas: HTMLCanvasElement = canvasRef.current;
     const context = canvas.getContext("2d");
     if (context) {
-      context.strokeStyle = color;
+      context.strokeStyle = pixelData.color;
       context.lineJoin = "round";
       context.lineWidth = 5;
 
       context.beginPath();
-      context.moveTo(originalMousePosition.x, originalMousePosition.y);
-      context.lineTo(newMousePosition.x, newMousePosition.y);
+      context.moveTo(pixelData.mousePosition.x, pixelData.mousePosition.y);
+      context.lineTo(pixelData.newMousePosition.x, pixelData.newMousePosition.y);
       context.closePath();
 
       context.stroke();
@@ -72,12 +105,16 @@ const Canvas = () => {
       if (isPainting) {
         const newMousePosition = getCoordinates(event);
         if (mousePosition && newMousePosition) {
-          drawLine(mousePosition, newMousePosition);
+            ws.current?.send(JSON.stringify({type: 'PIXELS_DATA', payload: {
+                mousePosition: mousePosition,
+                newMousePosition: newMousePosition,
+                color: color,
+              }}));
           setMousePosition(newMousePosition);
         }
       }
     },
-    [isPainting, mousePosition]
+    [isPainting, mousePosition, color]
   );
 
 
@@ -112,16 +149,22 @@ const Canvas = () => {
 
 
 
+  const clear = () => {
+    ws.current?.send(JSON.stringify({type: 'CLEAR_PIXELS'}));
+  };
+
   return (
     <>
-      <ColorPicker color={color} onChange={color => setColor(color.hex)} />;
+      <ColorPicker color={color} onChange={color => setColor(color.hex)}/>;
       <canvas
         style={{border: "1px solid"}}
         ref={canvasRef}
         height={600}
         width={800}
-        onMouseUp={() => console.log("finish")}
       />
+      <button onClick={clear}>
+        Clear
+      </button>
     </>
   );
 };
